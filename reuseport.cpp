@@ -85,14 +85,6 @@ bool create_and_bind_socket(std::size_t thread_id, const std::string& host, unsi
         return false;
     }
 
-    bool bpf_result = load_bpf(sockfd, threads_per_port);
-
-    if (!bpf_result) {
-        std::cerr << "Cannot load BPF" << std::endl;
-        
-        return false;
-    }
-
     int bind_result = bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen);
 
     if (bind_result) {
@@ -167,6 +159,14 @@ int main() {
 
     uint32_t number_of_threads = 2;
 
+    class worker_data_t {
+        public:
+        int socket_fd    = 0;
+        size_t thread_id = 0;
+    };
+
+    std::vector<worker_data_t> workers;
+
     std::vector<std::thread> thread_group;
 
     for (size_t thread_id = 0; thread_id < number_of_threads; thread_id++) {
@@ -179,9 +179,25 @@ int main() {
             exit(1);
         }
 
-        // Start traffic capture
-        std::thread current_thread(capture_traffic_from_socket, socket_fd, thread_id);
-        set_process_name(current_thread, "udp_thread_" + std::to_string(thread_id));
+        worker_data_t worker_data;
+        worker_data.socket_fd = socket_fd;
+        worker_data.thread_id = thread_id;
+
+        workers.push_back(worker_data);
+    }
+
+    std::cout << "Starting packet capture" << std::endl;
+
+    for (const auto& worker_data : workers) {
+        bool bpf_result = load_bpf(worker_data.socket_fd, number_of_threads);
+
+        if (!bpf_result) {
+            std::cerr << "Cannot load BPF" << std::endl;
+            exit(1);
+        }
+
+        std::thread current_thread(capture_traffic_from_socket, worker_data.socket_fd, worker_data.thread_id);
+        set_process_name(current_thread, "udp_thread_" + std::to_string(worker_data.thread_id));
         thread_group.push_back(std::move(current_thread));
     }
 
